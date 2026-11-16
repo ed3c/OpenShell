@@ -39,6 +39,7 @@ const (
 	OpenShell_DetachSandboxProvider_FullMethodName         = "/openshell.v1.OpenShell/DetachSandboxProvider"
 	OpenShell_GetSandboxProviderStatus_FullMethodName      = "/openshell.v1.OpenShell/GetSandboxProviderStatus"
 	OpenShell_DeleteSandbox_FullMethodName                 = "/openshell.v1.OpenShell/DeleteSandbox"
+	OpenShell_DeleteSandboxIfMatches_FullMethodName        = "/openshell.v1.OpenShell/DeleteSandboxIfMatches"
 	OpenShell_StopSandbox_FullMethodName                   = "/openshell.v1.OpenShell/StopSandbox"
 	OpenShell_StartSandbox_FullMethodName                  = "/openshell.v1.OpenShell/StartSandbox"
 	OpenShell_CreateSshSession_FullMethodName              = "/openshell.v1.OpenShell/CreateSshSession"
@@ -161,6 +162,9 @@ type OpenShellClient interface {
 	GetSandboxProviderStatus(ctx context.Context, in *GetSandboxProviderStatusRequest, opts ...grpc.CallOption) (*GetSandboxProviderStatusResponse, error)
 	// Delete a sandbox by name.
 	DeleteSandbox(ctx context.Context, in *DeleteSandboxRequest, opts ...grpc.CallOption) (*DeleteSandboxResponse, error)
+	// Delete only if the canonical name still identifies the observed sandbox.
+	// Older gateways reject this method without starting a name-only deletion.
+	DeleteSandboxIfMatches(ctx context.Context, in *DeleteSandboxIfMatchesRequest, opts ...grpc.CallOption) (*DeleteSandboxIfMatchesResponse, error)
 	// Stop a sandbox while retaining its persistent state.
 	StopSandbox(ctx context.Context, in *StopSandboxRequest, opts ...grpc.CallOption) (*SandboxResponse, error)
 	// Start a previously stopped sandbox.
@@ -513,6 +517,16 @@ func (c *openShellClient) DeleteSandbox(ctx context.Context, in *DeleteSandboxRe
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DeleteSandboxResponse)
 	err := c.cc.Invoke(ctx, OpenShell_DeleteSandbox_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *openShellClient) DeleteSandboxIfMatches(ctx context.Context, in *DeleteSandboxIfMatchesRequest, opts ...grpc.CallOption) (*DeleteSandboxIfMatchesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteSandboxIfMatchesResponse)
+	err := c.cc.Invoke(ctx, OpenShell_DeleteSandboxIfMatches_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1287,6 +1301,9 @@ type OpenShellServer interface {
 	GetSandboxProviderStatus(context.Context, *GetSandboxProviderStatusRequest) (*GetSandboxProviderStatusResponse, error)
 	// Delete a sandbox by name.
 	DeleteSandbox(context.Context, *DeleteSandboxRequest) (*DeleteSandboxResponse, error)
+	// Delete only if the canonical name still identifies the observed sandbox.
+	// Older gateways reject this method without starting a name-only deletion.
+	DeleteSandboxIfMatches(context.Context, *DeleteSandboxIfMatchesRequest) (*DeleteSandboxIfMatchesResponse, error)
 	// Stop a sandbox while retaining its persistent state.
 	StopSandbox(context.Context, *StopSandboxRequest) (*SandboxResponse, error)
 	// Start a previously stopped sandbox.
@@ -1532,6 +1549,9 @@ func (UnimplementedOpenShellServer) GetSandboxProviderStatus(context.Context, *G
 }
 func (UnimplementedOpenShellServer) DeleteSandbox(context.Context, *DeleteSandboxRequest) (*DeleteSandboxResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteSandbox not implemented")
+}
+func (UnimplementedOpenShellServer) DeleteSandboxIfMatches(context.Context, *DeleteSandboxIfMatchesRequest) (*DeleteSandboxIfMatchesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteSandboxIfMatches not implemented")
 }
 func (UnimplementedOpenShellServer) StopSandbox(context.Context, *StopSandboxRequest) (*SandboxResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method StopSandbox not implemented")
@@ -2042,6 +2062,24 @@ func _OpenShell_DeleteSandbox_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(OpenShellServer).DeleteSandbox(ctx, req.(*DeleteSandboxRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OpenShell_DeleteSandboxIfMatches_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteSandboxIfMatchesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OpenShellServer).DeleteSandboxIfMatches(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OpenShell_DeleteSandboxIfMatches_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OpenShellServer).DeleteSandboxIfMatches(ctx, req.(*DeleteSandboxIfMatchesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -3260,6 +3298,10 @@ var OpenShell_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteSandbox",
 			Handler:    _OpenShell_DeleteSandbox_Handler,
+		},
+		{
+			MethodName: "DeleteSandboxIfMatches",
+			Handler:    _OpenShell_DeleteSandboxIfMatches_Handler,
 		},
 		{
 			MethodName: "StopSandbox",

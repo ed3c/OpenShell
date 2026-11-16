@@ -7,6 +7,7 @@ use crate::auth::principal::UserPrincipal;
 use crate::grpc::mutation_replay::tests::reason;
 use crate::grpc::mutation_replay::{Admission, OBJECT_TYPE, OriginalMutation, fingerprint, run};
 use crate::grpc::test_support::{authed_request, test_server_state};
+use openshell_core::ObjectName;
 use openshell_core::proto::datamodel::v1::ObjectMeta;
 use openshell_core::proto::{
     DeletionOutcome, DraftChunkApproval, GetDraftPolicyRequest, NetworkBinary, NetworkEndpoint,
@@ -1154,4 +1155,111 @@ async fn draft_receipts_replay_after_chunk_state_and_review_tokens_change() {
         .into_inner();
     assert_eq!(approved.chunks_approved, 1);
     assert_eq!(Box::pin(replay(&state, all)).await, approved);
+}
+
+#[tokio::test]
+async fn conditional_delete_replay_preserves_a_same_name_replacement() {
+    let (_directory, state) = protected_state().await;
+    let original = Sandbox {
+        metadata: Some(meta("conditional-replay")),
+        ..Default::default()
+    };
+    state.store.put_message(&original).await.unwrap();
+    let request = DeleteSandboxIfMatchesRequest {
+        workspace_scope: Some(openshell_core::proto::workspace_selector("default")),
+        name: original.object_name().into(),
+        expected_sandbox_id: original.object_id().into(),
+        request_id: id(),
+    };
+    let first = run(&state, authed_request(request.clone()))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(first.sandbox_id, original.object_id());
+    state
+        .store
+        .delete(Sandbox::object_type(), original.object_id())
+        .await
+        .unwrap();
+    let mut replacement = original.clone();
+    replacement.metadata.as_mut().unwrap().id = "replacement-sandbox".into();
+    state.store.put_message(&replacement).await.unwrap();
+    let replacement = state
+        .store
+        .get_message::<Sandbox>(replacement.object_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let replayed = run(&state, authed_request(request.clone()))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(replayed, first);
+    assert_eq!(
+        state
+            .store
+            .get_message::<Sandbox>(replacement.object_id())
+            .await
+            .unwrap()
+            .unwrap(),
+        replacement
+    );
+    let mut changed = request;
+    changed.expected_sandbox_id = replacement.object_id().into();
+    assert!(run(&state, authed_request(changed)).await.is_err());
+    assert!(
+        state
+            .store
+            .get_message::<Sandbox>(replacement.object_id())
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn conditional_delete_interceptors_cannot_retarget_the_original_identity() {
+    let (_directory, state) = protected_state().await;
+    let sandbox = Sandbox {
+        metadata: Some(meta("conditional-interceptor")),
+        ..Default::default()
+    };
+    state.store.put_message(&sandbox).await.unwrap();
+    let before = state
+        .store
+        .get_message::<Sandbox>(sandbox.object_id())
+        .await
+        .unwrap()
+        .unwrap();
+    for field in ["identity", "name", "workspace"] {
+        let original = DeleteSandboxIfMatchesRequest {
+            workspace_scope: Some(openshell_core::proto::workspace_selector("default")),
+            name: sandbox.object_name().into(),
+            expected_sandbox_id: sandbox.object_id().into(),
+            request_id: id(),
+        };
+        let mut effective = original.clone();
+        match field {
+            "identity" => effective.expected_sandbox_id = "foreign".into(),
+            "name" => effective.name = "foreign".into(),
+            _ => {
+                effective.workspace_scope =
+                    Some(openshell_core::proto::workspace_selector("foreign"))
+            }
+        }
+        let mut request = authed_request(effective);
+        request
+            .extensions_mut()
+            .insert(OriginalMutation(original.encode_to_vec()));
+        assert!(run(&state, request).await.is_err());
+        assert_eq!(
+            state
+                .store
+                .get_message::<Sandbox>(sandbox.object_id())
+                .await
+                .unwrap()
+                .unwrap(),
+            before
+        );
+    }
 }

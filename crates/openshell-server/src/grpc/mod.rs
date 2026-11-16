@@ -27,19 +27,20 @@ use openshell_core::proto::{
     CreateSshSessionResponse, CreateWorkspaceRequest, CreateWorkspaceResponse,
     DeleteProviderProfileRequest, DeleteProviderProfileResponse, DeleteProviderRefreshRequest,
     DeleteProviderRefreshResponse, DeleteProviderRequest, DeleteProviderResponse,
-    DeleteSandboxRequest, DeleteSandboxResponse, DeleteSandboxTemplateRequest,
-    DeleteSandboxTemplateResponse, DeleteServiceRequest, DeleteServiceResponse,
-    DeleteWorkspaceRequest, DeleteWorkspaceResponse, DetachSandboxProviderRequest,
-    DetachSandboxProviderResponse, EditDraftChunkRequest, EditDraftChunkResponse,
-    ExchangeProviderSubjectTokenRequest, ExchangeProviderSubjectTokenResponse, ExecSandboxEvent,
-    ExecSandboxInput, ExecSandboxRequest, ExposeServiceRequest, ExtensionKind,
-    FinalizeMainProcessExitRequest, FinalizeMainProcessExitResponse, GatewayMessage,
-    GetCurrentUserRequest, GetCurrentUserResponse, GetDraftHistoryRequest, GetDraftHistoryResponse,
-    GetDraftPolicyRequest, GetDraftPolicyResponse, GetGatewayConfigRequest,
-    GetGatewayConfigResponse, GetGatewayInfoRequest, GetGatewayInfoResponse,
-    GetProviderProfileRequest, GetProviderRefreshStatusRequest, GetProviderRefreshStatusResponse,
-    GetProviderRequest, GetSandboxConfigRequest, GetSandboxConfigResponse, GetSandboxLogsRequest,
-    GetSandboxLogsResponse, GetSandboxPolicyStatusRequest, GetSandboxPolicyStatusResponse,
+    DeleteSandboxIfMatchesRequest, DeleteSandboxIfMatchesResponse, DeleteSandboxRequest,
+    DeleteSandboxResponse, DeleteSandboxTemplateRequest, DeleteSandboxTemplateResponse,
+    DeleteServiceRequest, DeleteServiceResponse, DeleteWorkspaceRequest, DeleteWorkspaceResponse,
+    DetachSandboxProviderRequest, DetachSandboxProviderResponse, EditDraftChunkRequest,
+    EditDraftChunkResponse, ExchangeProviderSubjectTokenRequest,
+    ExchangeProviderSubjectTokenResponse, ExecSandboxEvent, ExecSandboxInput, ExecSandboxRequest,
+    ExposeServiceRequest, ExtensionKind, FinalizeMainProcessExitRequest,
+    FinalizeMainProcessExitResponse, GatewayMessage, GetCurrentUserRequest, GetCurrentUserResponse,
+    GetDraftHistoryRequest, GetDraftHistoryResponse, GetDraftPolicyRequest, GetDraftPolicyResponse,
+    GetGatewayConfigRequest, GetGatewayConfigResponse, GetGatewayInfoRequest,
+    GetGatewayInfoResponse, GetProviderProfileRequest, GetProviderRefreshStatusRequest,
+    GetProviderRefreshStatusResponse, GetProviderRequest, GetSandboxConfigRequest,
+    GetSandboxConfigResponse, GetSandboxLogsRequest, GetSandboxLogsResponse,
+    GetSandboxPolicyStatusRequest, GetSandboxPolicyStatusResponse,
     GetSandboxProviderEnvironmentRequest, GetSandboxProviderEnvironmentResponse,
     GetSandboxProviderStatusRequest, GetSandboxProviderStatusResponse, GetSandboxRequest,
     GetSandboxTemplateRequest, GetServiceRequest, GetWorkspaceRequest, GetWorkspaceResponse,
@@ -418,6 +419,13 @@ impl OpenShell for OpenShellService {
         &self,
         request: Request<DeleteSandboxRequest>,
     ) -> Result<Response<DeleteSandboxResponse>, Status> {
+        mutation_replay::run(&self.state, request).await
+    }
+
+    async fn delete_sandbox_if_matches(
+        &self,
+        request: Request<DeleteSandboxIfMatchesRequest>,
+    ) -> Result<Response<DeleteSandboxIfMatchesResponse>, Status> {
         mutation_replay::run(&self.state, request).await
     }
 

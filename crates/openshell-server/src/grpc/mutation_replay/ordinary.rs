@@ -17,7 +17,8 @@ use openshell_core::proto::{
     ConfigureProviderRefreshResponse, CreateProviderRequest, CreateSandboxRequest,
     DeleteProviderProfileRequest, DeleteProviderProfileResponse, DeleteProviderRefreshRequest,
     DeleteProviderRefreshResponse, DeleteProviderRequest, DeleteProviderResponse,
-    DeleteSandboxRequest, DeleteSandboxResponse, DeleteServiceRequest, DeleteServiceResponse,
+    DeleteSandboxIfMatchesRequest, DeleteSandboxIfMatchesResponse, DeleteSandboxRequest,
+    DeleteSandboxResponse, DeleteServiceRequest, DeleteServiceResponse,
     DetachSandboxProviderRequest, DetachSandboxProviderResponse, EditDraftChunkRequest,
     EditDraftChunkResponse, ExposeServiceRequest, ImportProviderProfilesRequest,
     ImportProviderProfilesResponse, Provider, ProviderMutationReceipt, ProviderProfile,
@@ -553,6 +554,27 @@ sandbox_scoped_mutation!(
             return Err(replay_unavailable());
         };
         Ok(DeleteSandboxResponse {
+            sandbox_id: id,
+            outcome,
+        })
+    }
+);
+
+sandbox_scoped_mutation!(
+    DeleteSandboxIfMatchesRequest,
+    DeleteSandboxIfMatchesResponse,
+    "DeleteSandboxIfMatches",
+    sandbox::handle_delete_sandbox_if_matches,
+    User,
+    |response: &Response<DeleteSandboxIfMatchesResponse>| Ok(Outcome::SandboxDeletion {
+        id: response.get_ref().sandbox_id.clone(),
+        outcome: response.get_ref().outcome
+    }),
+    async |_store: &Store, value: Outcome| {
+        let Outcome::SandboxDeletion { id, outcome } = value else {
+            return Err(replay_unavailable());
+        };
+        Ok(DeleteSandboxIfMatchesResponse {
             sandbox_id: id,
             outcome,
         })

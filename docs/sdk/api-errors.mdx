@@ -99,7 +99,7 @@ Thirty user-callable unary RPCs accept an optional `request_id` in their protobu
 | Workspace | `CreateWorkspace`, `DeleteWorkspace` |
 | Workspace member | `AddWorkspaceMember`, `RemoveWorkspaceMember` |
 | Sandbox template | `CreateSandboxTemplate`, `DeleteSandboxTemplate` |
-| Sandbox | `CreateSandbox`, `DeleteSandbox`, `StartSandbox`, `StopSandbox`, `AttachSandboxProvider`, `DetachSandboxProvider` |
+| Sandbox | `CreateSandbox`, `DeleteSandbox`, `DeleteSandboxIfMatches`, `StartSandbox`, `StopSandbox`, `AttachSandboxProvider`, `DetachSandboxProvider` |
 | Service | `ExposeService`, `DeleteService` |
 | Provider | `CreateProvider`, `UpdateProvider`, `DeleteProvider`, `ConfigureProviderRefresh`, `DeleteProviderRefresh`, `RotateProviderCredential` |
 | Provider profile | `ImportProviderProfiles`, `UpdateProviderProfiles`, `DeleteProviderProfile` |
@@ -254,6 +254,14 @@ failed preconditions, or backend errors. Re-revoking an existing revoked session
 returns `COMPLETED` after authorization without changing its resource version.
 
 `DeleteSandbox` also returns the original `sandbox_id` when it found a target.
+
+Use `DeleteSandboxIfMatches` when deleting a sandbox observed earlier. Supply its
+canonical name and the original `expected_sandbox_id`. The gateway rejects a
+same-name replacement before deletion. Older gateways return `UNIMPLEMENTED`;
+clients must not fall back to `DeleteSandbox`. A successful native deletion still
+requires the compute driver's resource-release readback before claiming disk
+space was reclaimed.
+
 For an accepted deletion, poll or watch that identity. A same-name sandbox with a
 different ID is not the sandbox being deleted. Cancellation or a disconnected
 client does not stop the gateway's already-started deletion worker.

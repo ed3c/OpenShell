@@ -27,17 +27,18 @@ use openshell_core::proto::datamodel::v1::ObjectMeta;
 use openshell_core::proto::{
     AttachSandboxProviderRequest, AttachSandboxProviderResponse, CreateSandboxRequest,
     CreateSandboxTemplateRequest, CreateSshSessionRequest, CreateSshSessionResponse,
-    DeleteSandboxRequest, DeleteSandboxResponse, DeleteSandboxTemplateRequest,
-    DeleteSandboxTemplateResponse, DetachSandboxProviderRequest, DetachSandboxProviderResponse,
-    ExecSandboxEvent, ExecSandboxExit, ExecSandboxInput, ExecSandboxRequest, ExecSandboxStderr,
-    ExecSandboxStdout, GetSandboxRequest, GetSandboxTemplateRequest, ListSandboxProvidersRequest,
-    ListSandboxProvidersResponse, ListSandboxTemplatesRequest, ListSandboxTemplatesResponse,
-    ListSandboxesRequest, ListSandboxesResponse, Provider, ProviderMutationKind,
-    ResourceRequirements, RevokeSshSessionRequest, RevokeSshSessionResponse, SandboxResources,
-    SandboxResponse, SandboxSpec, SandboxStreamEvent, SandboxTemplateResponse,
-    SandboxWorkloadTemplate, SandboxWorkloadTemplateProvenance, SshRelayTarget,
-    StartSandboxRequest, StopSandboxRequest, TcpForwardFrame, TcpForwardInit, TcpRelayTarget,
-    WatchSandboxRequest, relay_open, tcp_forward_init,
+    DeleteSandboxIfMatchesRequest, DeleteSandboxIfMatchesResponse, DeleteSandboxRequest,
+    DeleteSandboxResponse, DeleteSandboxTemplateRequest, DeleteSandboxTemplateResponse,
+    DetachSandboxProviderRequest, DetachSandboxProviderResponse, ExecSandboxEvent, ExecSandboxExit,
+    ExecSandboxInput, ExecSandboxRequest, ExecSandboxStderr, ExecSandboxStdout, GetSandboxRequest,
+    GetSandboxTemplateRequest, ListSandboxProvidersRequest, ListSandboxProvidersResponse,
+    ListSandboxTemplatesRequest, ListSandboxTemplatesResponse, ListSandboxesRequest,
+    ListSandboxesResponse, Provider, ProviderMutationKind, ResourceRequirements,
+    RevokeSshSessionRequest, RevokeSshSessionResponse, SandboxResources, SandboxResponse,
+    SandboxSpec, SandboxStreamEvent, SandboxTemplateResponse, SandboxWorkloadTemplate,
+    SandboxWorkloadTemplateProvenance, SshRelayTarget, StartSandboxRequest, StopSandboxRequest,
+    TcpForwardFrame, TcpForwardInit, TcpRelayTarget, WatchSandboxRequest, relay_open,
+    tcp_forward_init,
 };
 use openshell_core::proto::{
     BeginRootfsTarStagingRequest, BeginRootfsTarStagingResponse, Sandbox, SandboxPhase,
@@ -1687,9 +1688,74 @@ pub(super) async fn handle_delete_sandbox(
     result
 }
 
+pub(super) async fn handle_delete_sandbox_if_matches(
+    state: &Arc<ServerState>,
+    request: Request<DeleteSandboxIfMatchesRequest>,
+) -> Result<Response<DeleteSandboxIfMatchesResponse>, Status> {
+    if let Some(original) = request
+        .extensions()
+        .get::<super::mutation_replay::OriginalMutation>()
+    {
+        let original = DeleteSandboxIfMatchesRequest::decode(original.0.as_slice())
+            .map_err(|_| Status::internal("decode original conditional deletion"))?;
+        let effective = request.get_ref();
+        if original.name != effective.name
+            || original.workspace_scope != effective.workspace_scope
+            || original.expected_sandbox_id != effective.expected_sandbox_id
+        {
+            return Err(Status::invalid_argument(
+                "interceptors must preserve the original conditional deletion target",
+            ));
+        }
+    }
+    let expected_sandbox_id = request.get_ref().expected_sandbox_id.clone();
+    if expected_sandbox_id.trim().is_empty() {
+        return Err(Status::invalid_argument("expected_sandbox_id is required"));
+    }
+    let request = request.map(|req| DeleteSandboxRequest {
+        workspace_scope: req.workspace_scope,
+        name: req.name,
+        allow_missing: false,
+        request_id: req.request_id,
+    });
+    let result = handle_delete_sandbox_checked(
+        state,
+        request,
+        SandboxDeletePreconditions {
+            expected_sandbox_id: Some(expected_sandbox_id),
+            expected_resource_version: None,
+        },
+    )
+    .await;
+    openshell_core::telemetry::emit_lifecycle(
+        LifecycleResource::Sandbox,
+        LifecycleOperation::Delete,
+        if result.is_ok() {
+            TelemetryOutcome::Success
+        } else {
+            TelemetryOutcome::Failure
+        },
+    );
+    result.map(|response| {
+        let response = response.into_inner();
+        Response::new(DeleteSandboxIfMatchesResponse {
+            outcome: response.outcome,
+            sandbox_id: response.sandbox_id,
+        })
+    })
+}
+
 async fn handle_delete_sandbox_inner(
     state: &Arc<ServerState>,
     request: Request<DeleteSandboxRequest>,
+) -> Result<Response<DeleteSandboxResponse>, Status> {
+    handle_delete_sandbox_checked(state, request, SandboxDeletePreconditions::default()).await
+}
+
+async fn handle_delete_sandbox_checked(
+    state: &Arc<ServerState>,
+    request: Request<DeleteSandboxRequest>,
+    preconditions: SandboxDeletePreconditions,
 ) -> Result<Response<DeleteSandboxResponse>, Status> {
     let principal = super::extract_principal(&request)?;
     let req = request.into_inner();
@@ -1715,10 +1781,6 @@ async fn handle_delete_sandbox_inner(
     let workspace = super::workspace::resolve_workspace(state.store.as_ref(), &authz.workspace)
         .await?
         .name;
-    // Main's canonical public delete request contains no caller-provided
-    // identity/version fields. The compute layer still binds the resolved
-    // object ID and lifecycle guards before committing deletion.
-    let preconditions = SandboxDeletePreconditions::default();
     let result = state
         .compute
         .delete_sandbox_allow_missing_with_preconditions(
@@ -5866,6 +5928,128 @@ mod tests {
         assert_eq!(
             state.telemetry.ended_sandbox_sessions(),
             [original.object_id().to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn conditional_delete_rejects_name_replacement_before_mutation() {
+        let state = test_server_state().await;
+        let mut current = test_sandbox("conditional-delete", Vec::new());
+        current.metadata.as_mut().unwrap().id = "current-sandbox".into();
+        state.store.put_message(&current).await.unwrap();
+        let current = state
+            .store
+            .get_message::<Sandbox>(current.object_id())
+            .await
+            .unwrap()
+            .unwrap();
+        let error = handle_delete_sandbox_if_matches(
+            &state,
+            authed_request(DeleteSandboxIfMatchesRequest {
+                workspace_scope: Some(openshell_core::proto::workspace_selector("default")),
+                name: current.object_name().into(),
+                expected_sandbox_id: "original-sandbox".into(),
+                request_id: String::new(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::Aborted);
+        let after = state
+            .store
+            .get_message::<Sandbox>(current.object_id())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(after, current);
+    }
+
+    #[tokio::test]
+    async fn conditional_delete_requires_original_identity_and_workspace_permission() {
+        use crate::auth::identity::{Identity, IdentityProvider};
+        use crate::auth::principal::{Principal, UserPrincipal};
+        let mut state = test_server_state().await;
+        Arc::get_mut(&mut state).unwrap().admin_role = "openshell-admin".into();
+        let current = test_sandbox("conditional-permissions", Vec::new());
+        state.store.put_message(&current).await.unwrap();
+        let current = state
+            .store
+            .get_message::<Sandbox>(current.object_id())
+            .await
+            .unwrap()
+            .unwrap();
+        let request = DeleteSandboxIfMatchesRequest {
+            workspace_scope: Some(openshell_core::proto::workspace_selector("default")),
+            name: current.object_name().into(),
+            expected_sandbox_id: String::new(),
+            request_id: String::new(),
+        };
+        let error = handle_delete_sandbox_if_matches(&state, authed_request(request.clone()))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::InvalidArgument);
+        let mut unauthorized = request;
+        unauthorized.expected_sandbox_id = current.object_id().into();
+        let mut unauthorized = Request::new(unauthorized);
+        unauthorized
+            .extensions_mut()
+            .insert(Principal::User(UserPrincipal {
+                identity: Identity {
+                    subject: "non-member".into(),
+                    display_name: None,
+                    roles: vec![],
+                    scopes: vec![],
+                    provider: IdentityProvider::Oidc,
+                },
+            }));
+        let error = handle_delete_sandbox_if_matches(&state, unauthorized)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::NotFound);
+        assert_eq!(
+            state
+                .store
+                .get_message::<Sandbox>(current.object_id())
+                .await
+                .unwrap()
+                .unwrap(),
+            current
+        );
+    }
+
+    #[tokio::test]
+    async fn conditional_delete_returns_only_the_original_identity() {
+        let state = test_server_state().await;
+        let current = test_sandbox("conditional-original", Vec::new());
+        state.store.put_message(&current).await.unwrap();
+        let response = handle_delete_sandbox_if_matches(
+            &state,
+            authed_request(DeleteSandboxIfMatchesRequest {
+                workspace_scope: Some(openshell_core::proto::workspace_selector("default")),
+                name: current.object_name().into(),
+                expected_sandbox_id: current.object_id().into(),
+                request_id: String::new(),
+            }),
+        )
+        .await
+        .unwrap()
+        .into_inner();
+        assert_eq!(response.sandbox_id, current.object_id());
+        assert_eq!(
+            response.outcome,
+            i32::from(openshell_core::proto::DeletionOutcome::Accepted)
+        );
+        // The original driver fixture acknowledges deletion without publishing
+        // its removal. Accepted must retain the gateway record as Deleting.
+        let original = state
+            .store
+            .get_message::<Sandbox>(current.object_id())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            original.status.unwrap().phase,
+            i32::from(SandboxPhase::Deleting)
         );
     }
 
