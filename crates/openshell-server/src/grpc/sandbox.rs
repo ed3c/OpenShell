@@ -27,10 +27,11 @@ use openshell_core::proto::datamodel::v1::ObjectMeta;
 use openshell_core::proto::{
     AttachSandboxProviderRequest, AttachSandboxProviderResponse, CreateSandboxRequest,
     CreateSandboxTemplateRequest, CreateSshSessionRequest, CreateSshSessionResponse,
-    DeleteSandboxIfMatchesRequest, DeleteSandboxIfMatchesResponse, DeleteSandboxRequest,
-    DeleteSandboxResponse, DeleteSandboxTemplateRequest, DeleteSandboxTemplateResponse,
-    DetachSandboxProviderRequest, DetachSandboxProviderResponse, ExecSandboxEvent, ExecSandboxExit,
-    ExecSandboxInput, ExecSandboxRequest, ExecSandboxStderr, ExecSandboxStdout, GetSandboxRequest,
+    DeleteSandboxRequest, DeleteSandboxResponse, DeleteSandboxTemplateRequest,
+    DeleteSandboxTemplateResponse, DeleteStoppedSandboxIfMatchesRequest,
+    DeleteStoppedSandboxIfMatchesResponse, DetachSandboxProviderRequest,
+    DetachSandboxProviderResponse, ExecSandboxEvent, ExecSandboxExit, ExecSandboxInput,
+    ExecSandboxRequest, ExecSandboxStderr, ExecSandboxStdout, GetSandboxRequest,
     GetSandboxTemplateRequest, ListSandboxProvidersRequest, ListSandboxProvidersResponse,
     ListSandboxTemplatesRequest, ListSandboxTemplatesResponse, ListSandboxesRequest,
     ListSandboxesResponse, Provider, ProviderMutationKind, ResourceRequirements,
@@ -1688,25 +1689,32 @@ pub(super) async fn handle_delete_sandbox(
     result
 }
 
-pub(super) async fn handle_delete_sandbox_if_matches(
+pub(super) async fn handle_delete_stopped_sandbox_if_matches(
     state: &Arc<ServerState>,
-    request: Request<DeleteSandboxIfMatchesRequest>,
-) -> Result<Response<DeleteSandboxIfMatchesResponse>, Status> {
+    request: Request<DeleteStoppedSandboxIfMatchesRequest>,
+) -> Result<Response<DeleteStoppedSandboxIfMatchesResponse>, Status> {
     if let Some(original) = request
         .extensions()
         .get::<super::mutation_replay::OriginalMutation>()
     {
-        let original = DeleteSandboxIfMatchesRequest::decode(original.0.as_slice())
+        let original = DeleteStoppedSandboxIfMatchesRequest::decode(original.0.as_slice())
             .map_err(|_| Status::internal("decode original conditional deletion"))?;
         let effective = request.get_ref();
         if original.name != effective.name
             || original.workspace_scope != effective.workspace_scope
             || original.expected_sandbox_id != effective.expected_sandbox_id
+            || original.expected_resource_version != effective.expected_resource_version
         {
             return Err(Status::invalid_argument(
                 "interceptors must preserve the original conditional deletion target",
             ));
         }
+    }
+    let expected_resource_version = request.get_ref().expected_resource_version;
+    if expected_resource_version == 0 {
+        return Err(Status::invalid_argument(
+            "expected_resource_version from the original Stopped observation is required",
+        ));
     }
     let expected_sandbox_id = request.get_ref().expected_sandbox_id.clone();
     if expected_sandbox_id.trim().is_empty() {
@@ -1723,7 +1731,8 @@ pub(super) async fn handle_delete_sandbox_if_matches(
         request,
         SandboxDeletePreconditions {
             expected_sandbox_id: Some(expected_sandbox_id),
-            expected_resource_version: None,
+            expected_resource_version: Some(expected_resource_version),
+            require_stopped: true,
         },
     )
     .await;
@@ -1738,7 +1747,7 @@ pub(super) async fn handle_delete_sandbox_if_matches(
     );
     result.map(|response| {
         let response = response.into_inner();
-        Response::new(DeleteSandboxIfMatchesResponse {
+        Response::new(DeleteStoppedSandboxIfMatchesResponse {
             outcome: response.outcome,
             sandbox_id: response.sandbox_id,
         })
@@ -5943,12 +5952,13 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let error = handle_delete_sandbox_if_matches(
+        let error = handle_delete_stopped_sandbox_if_matches(
             &state,
-            authed_request(DeleteSandboxIfMatchesRequest {
+            authed_request(DeleteStoppedSandboxIfMatchesRequest {
                 workspace_scope: Some(openshell_core::proto::workspace_selector("default")),
                 name: current.object_name().into(),
                 expected_sandbox_id: "original-sandbox".into(),
+                expected_resource_version: current.get_resource_version(),
                 request_id: String::new(),
             }),
         )
@@ -5978,15 +5988,17 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let request = DeleteSandboxIfMatchesRequest {
+        let request = DeleteStoppedSandboxIfMatchesRequest {
             workspace_scope: Some(openshell_core::proto::workspace_selector("default")),
             name: current.object_name().into(),
             expected_sandbox_id: String::new(),
+            expected_resource_version: current.get_resource_version(),
             request_id: String::new(),
         };
-        let error = handle_delete_sandbox_if_matches(&state, authed_request(request.clone()))
-            .await
-            .unwrap_err();
+        let error =
+            handle_delete_stopped_sandbox_if_matches(&state, authed_request(request.clone()))
+                .await
+                .unwrap_err();
         assert_eq!(error.code(), tonic::Code::InvalidArgument);
         let mut unauthorized = request;
         unauthorized.expected_sandbox_id = current.object_id().into();
@@ -6002,7 +6014,7 @@ mod tests {
                     provider: IdentityProvider::Oidc,
                 },
             }));
-        let error = handle_delete_sandbox_if_matches(&state, unauthorized)
+        let error = handle_delete_stopped_sandbox_if_matches(&state, unauthorized)
             .await
             .unwrap_err();
         assert_eq!(error.code(), tonic::Code::NotFound);
@@ -6020,14 +6032,22 @@ mod tests {
     #[tokio::test]
     async fn conditional_delete_returns_only_the_original_identity() {
         let state = test_server_state().await;
-        let current = test_sandbox("conditional-original", Vec::new());
+        let mut current = test_sandbox("conditional-original", Vec::new());
+        current.status.as_mut().unwrap().phase = SandboxPhase::Stopped.into();
         state.store.put_message(&current).await.unwrap();
-        let response = handle_delete_sandbox_if_matches(
+        let current = state
+            .store
+            .get_message::<Sandbox>(current.object_id())
+            .await
+            .unwrap()
+            .unwrap();
+        let response = handle_delete_stopped_sandbox_if_matches(
             &state,
-            authed_request(DeleteSandboxIfMatchesRequest {
+            authed_request(DeleteStoppedSandboxIfMatchesRequest {
                 workspace_scope: Some(openshell_core::proto::workspace_selector("default")),
                 name: current.object_name().into(),
                 expected_sandbox_id: current.object_id().into(),
+                expected_resource_version: current.get_resource_version(),
                 request_id: String::new(),
             }),
         )
@@ -6068,6 +6088,7 @@ mod tests {
                 SandboxDeletePreconditions {
                     expected_sandbox_id: Some("sb-stale".to_string()),
                     expected_resource_version: None,
+                    require_stopped: false,
                 },
             )
             .await
@@ -6099,6 +6120,7 @@ mod tests {
                 SandboxDeletePreconditions {
                     expected_sandbox_id: None,
                     expected_resource_version: Some(17),
+                    require_stopped: false,
                 },
             )
             .await

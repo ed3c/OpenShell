@@ -1162,13 +1162,24 @@ async fn conditional_delete_replay_preserves_a_same_name_replacement() {
     let (_directory, state) = protected_state().await;
     let original = Sandbox {
         metadata: Some(meta("conditional-replay")),
+        status: Some(openshell_core::proto::SandboxStatus {
+            phase: SandboxPhase::Stopped.into(),
+            ..Default::default()
+        }),
         ..Default::default()
     };
     state.store.put_message(&original).await.unwrap();
-    let request = DeleteSandboxIfMatchesRequest {
+    let original = state
+        .store
+        .get_message::<Sandbox>(original.object_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let request = DeleteStoppedSandboxIfMatchesRequest {
         workspace_scope: Some(openshell_core::proto::workspace_selector("default")),
         name: original.object_name().into(),
         expected_sandbox_id: original.object_id().into(),
+        expected_resource_version: original.get_resource_version(),
         request_id: id(),
     };
     let first = run(&state, authed_request(request.clone()))
@@ -1231,17 +1242,19 @@ async fn conditional_delete_interceptors_cannot_retarget_the_original_identity()
         .await
         .unwrap()
         .unwrap();
-    for field in ["identity", "name", "workspace"] {
-        let original = DeleteSandboxIfMatchesRequest {
+    for field in ["identity", "name", "workspace", "version"] {
+        let original = DeleteStoppedSandboxIfMatchesRequest {
             workspace_scope: Some(openshell_core::proto::workspace_selector("default")),
             name: sandbox.object_name().into(),
             expected_sandbox_id: sandbox.object_id().into(),
+            expected_resource_version: before.get_resource_version(),
             request_id: id(),
         };
         let mut effective = original.clone();
         match field {
             "identity" => effective.expected_sandbox_id = "foreign".into(),
             "name" => effective.name = "foreign".into(),
+            "version" => effective.expected_resource_version += 1,
             _ => {
                 effective.workspace_scope =
                     Some(openshell_core::proto::workspace_selector("foreign"))

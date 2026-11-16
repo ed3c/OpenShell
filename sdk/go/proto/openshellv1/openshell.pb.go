@@ -4679,7 +4679,7 @@ func (x *DeleteSandboxRequest) GetRequestId() string {
 }
 
 // Conditional deletion of one previously observed sandbox.
-type DeleteSandboxIfMatchesRequest struct {
+type DeleteStoppedSandboxIfMatchesRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Workspace scope. Only a named workspace selection is accepted.
 	WorkspaceScope *datamodelv1.WorkspaceSelector `protobuf:"bytes,1,opt,name=workspace_scope,json=workspaceScope,proto3" json:"workspace_scope,omitempty"`
@@ -4688,26 +4688,29 @@ type DeleteSandboxIfMatchesRequest struct {
 	// Required immutable identity from the original sandbox observation. A name
 	// replacement is rejected before any deletion is started.
 	ExpectedSandboxId string `protobuf:"bytes,3,opt,name=expected_sandbox_id,json=expectedSandboxId,proto3" json:"expected_sandbox_id,omitempty"`
+	// Required resource version from the same Stopped observation. The gateway
+	// checks it and the phase on every durable deletion CAS attempt.
+	ExpectedResourceVersion uint64 `protobuf:"varint,5,opt,name=expected_resource_version,json=expectedResourceVersion,proto3" json:"expected_resource_version,omitempty"`
 	// Optional nonzero UUID for durable at-most-once admission.
 	RequestId     string `protobuf:"bytes,4,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *DeleteSandboxIfMatchesRequest) Reset() {
-	*x = DeleteSandboxIfMatchesRequest{}
+func (x *DeleteStoppedSandboxIfMatchesRequest) Reset() {
+	*x = DeleteStoppedSandboxIfMatchesRequest{}
 	mi := &file_openshell_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *DeleteSandboxIfMatchesRequest) String() string {
+func (x *DeleteStoppedSandboxIfMatchesRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*DeleteSandboxIfMatchesRequest) ProtoMessage() {}
+func (*DeleteStoppedSandboxIfMatchesRequest) ProtoMessage() {}
 
-func (x *DeleteSandboxIfMatchesRequest) ProtoReflect() protoreflect.Message {
+func (x *DeleteStoppedSandboxIfMatchesRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_openshell_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4719,40 +4722,47 @@ func (x *DeleteSandboxIfMatchesRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use DeleteSandboxIfMatchesRequest.ProtoReflect.Descriptor instead.
-func (*DeleteSandboxIfMatchesRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use DeleteStoppedSandboxIfMatchesRequest.ProtoReflect.Descriptor instead.
+func (*DeleteStoppedSandboxIfMatchesRequest) Descriptor() ([]byte, []int) {
 	return file_openshell_proto_rawDescGZIP(), []int{48}
 }
 
-func (x *DeleteSandboxIfMatchesRequest) GetWorkspaceScope() *datamodelv1.WorkspaceSelector {
+func (x *DeleteStoppedSandboxIfMatchesRequest) GetWorkspaceScope() *datamodelv1.WorkspaceSelector {
 	if x != nil {
 		return x.WorkspaceScope
 	}
 	return nil
 }
 
-func (x *DeleteSandboxIfMatchesRequest) GetName() string {
+func (x *DeleteStoppedSandboxIfMatchesRequest) GetName() string {
 	if x != nil {
 		return x.Name
 	}
 	return ""
 }
 
-func (x *DeleteSandboxIfMatchesRequest) GetExpectedSandboxId() string {
+func (x *DeleteStoppedSandboxIfMatchesRequest) GetExpectedSandboxId() string {
 	if x != nil {
 		return x.ExpectedSandboxId
 	}
 	return ""
 }
 
-func (x *DeleteSandboxIfMatchesRequest) GetRequestId() string {
+func (x *DeleteStoppedSandboxIfMatchesRequest) GetExpectedResourceVersion() uint64 {
+	if x != nil {
+		return x.ExpectedResourceVersion
+	}
+	return 0
+}
+
+func (x *DeleteStoppedSandboxIfMatchesRequest) GetRequestId() string {
 	if x != nil {
 		return x.RequestId
 	}
 	return ""
 }
 
-type DeleteSandboxIfMatchesResponse struct {
+type DeleteStoppedSandboxIfMatchesResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// The outcome for the original immutable sandbox, never a name replacement.
 	Outcome       DeletionOutcome `protobuf:"varint,1,opt,name=outcome,proto3,enum=openshell.v1.DeletionOutcome" json:"outcome,omitempty"`
@@ -4761,20 +4771,20 @@ type DeleteSandboxIfMatchesResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *DeleteSandboxIfMatchesResponse) Reset() {
-	*x = DeleteSandboxIfMatchesResponse{}
+func (x *DeleteStoppedSandboxIfMatchesResponse) Reset() {
+	*x = DeleteStoppedSandboxIfMatchesResponse{}
 	mi := &file_openshell_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *DeleteSandboxIfMatchesResponse) String() string {
+func (x *DeleteStoppedSandboxIfMatchesResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*DeleteSandboxIfMatchesResponse) ProtoMessage() {}
+func (*DeleteStoppedSandboxIfMatchesResponse) ProtoMessage() {}
 
-func (x *DeleteSandboxIfMatchesResponse) ProtoReflect() protoreflect.Message {
+func (x *DeleteStoppedSandboxIfMatchesResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_openshell_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4786,19 +4796,19 @@ func (x *DeleteSandboxIfMatchesResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use DeleteSandboxIfMatchesResponse.ProtoReflect.Descriptor instead.
-func (*DeleteSandboxIfMatchesResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use DeleteStoppedSandboxIfMatchesResponse.ProtoReflect.Descriptor instead.
+func (*DeleteStoppedSandboxIfMatchesResponse) Descriptor() ([]byte, []int) {
 	return file_openshell_proto_rawDescGZIP(), []int{49}
 }
 
-func (x *DeleteSandboxIfMatchesResponse) GetOutcome() DeletionOutcome {
+func (x *DeleteStoppedSandboxIfMatchesResponse) GetOutcome() DeletionOutcome {
 	if x != nil {
 		return x.Outcome
 	}
 	return DeletionOutcome_DELETION_OUTCOME_UNSPECIFIED
 }
 
-func (x *DeleteSandboxIfMatchesResponse) GetSandboxId() string {
+func (x *DeleteStoppedSandboxIfMatchesResponse) GetSandboxId() string {
 	if x != nil {
 		return x.SandboxId
 	}
@@ -19802,14 +19812,15 @@ const file_openshell_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12#\n" +
 	"\rallow_missing\x18\x03 \x01(\bR\fallowMissing\x12\x1d\n" +
 	"\n" +
-	"request_id\x18\x04 \x01(\tR\trequestId\"\xd6\x01\n" +
-	"\x1dDeleteSandboxIfMatchesRequest\x12R\n" +
+	"request_id\x18\x04 \x01(\tR\trequestId\"\x99\x02\n" +
+	"$DeleteStoppedSandboxIfMatchesRequest\x12R\n" +
 	"\x0fworkspace_scope\x18\x01 \x01(\v2).openshell.datamodel.v1.WorkspaceSelectorR\x0eworkspaceScope\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12.\n" +
-	"\x13expected_sandbox_id\x18\x03 \x01(\tR\x11expectedSandboxId\x12\x1d\n" +
+	"\x13expected_sandbox_id\x18\x03 \x01(\tR\x11expectedSandboxId\x12:\n" +
+	"\x19expected_resource_version\x18\x05 \x01(\x04R\x17expectedResourceVersion\x12\x1d\n" +
 	"\n" +
-	"request_id\x18\x04 \x01(\tR\trequestId\"x\n" +
-	"\x1eDeleteSandboxIfMatchesResponse\x127\n" +
+	"request_id\x18\x04 \x01(\tR\trequestId\"\x7f\n" +
+	"%DeleteStoppedSandboxIfMatchesResponse\x127\n" +
 	"\aoutcome\x18\x01 \x01(\x0e2\x1d.openshell.v1.DeletionOutcomeR\aoutcome\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x02 \x01(\tR\tsandboxId\"\x9b\x01\n" +
@@ -21145,7 +21156,7 @@ const file_openshell_proto_rawDesc = "" +
 	"-SERVICE_AUTHORIZATION_MODE_BEARER_PASSTHROUGH\x10\x02*i\n" +
 	"\x15EndpointFailureDomain\x12'\n" +
 	"#ENDPOINT_FAILURE_DOMAIN_UNSPECIFIED\x10\x00\x12'\n" +
-	"#ENDPOINT_FAILURE_DOMAIN_TOKEN_GRANT\x10\x012\xcfX\n" +
+	"#ENDPOINT_FAILURE_DOMAIN_TOKEN_GRANT\x10\x012\xe4X\n" +
 	"\tOpenShell\x12Z\n" +
 	"\x06Health\x12\x1b.openshell.v1.HealthRequest\x1a\x1c.openshell.v1.HealthResponse\"\x15\x82\xb5\x18\x11\n" +
 	"\x0funauthenticated\x12i\n" +
@@ -21179,8 +21190,8 @@ const file_openshell_proto_rawDesc = "" +
 	"\x18GetSandboxProviderStatus\x12-.openshell.v1.GetSandboxProviderStatusRequest\x1a..openshell.v1.GetSandboxProviderStatusResponse\" \x82\xb5\x18\x1c\n" +
 	"\x06bearer\x12\x04user\"\fsandbox:read\x12{\n" +
 	"\rDeleteSandbox\x12\".openshell.v1.DeleteSandboxRequest\x1a#.openshell.v1.DeleteSandboxResponse\"!\x82\xb5\x18\x1d\n" +
-	"\x06bearer\x12\x04user\"\rsandbox:write\x12\x96\x01\n" +
-	"\x16DeleteSandboxIfMatches\x12+.openshell.v1.DeleteSandboxIfMatchesRequest\x1a,.openshell.v1.DeleteSandboxIfMatchesResponse\"!\x82\xb5\x18\x1d\n" +
+	"\x06bearer\x12\x04user\"\rsandbox:write\x12\xab\x01\n" +
+	"\x1dDeleteStoppedSandboxIfMatches\x122.openshell.v1.DeleteStoppedSandboxIfMatchesRequest\x1a3.openshell.v1.DeleteStoppedSandboxIfMatchesResponse\"!\x82\xb5\x18\x1d\n" +
 	"\x06bearer\x12\x04user\"\rsandbox:write\x12q\n" +
 	"\vStopSandbox\x12 .openshell.v1.StopSandboxRequest\x1a\x1d.openshell.v1.SandboxResponse\"!\x82\xb5\x18\x1d\n" +
 	"\x06bearer\x12\x04user\"\rsandbox:write\x12s\n" +
@@ -21412,8 +21423,8 @@ var file_openshell_proto_goTypes = []any{
 	(*AttachSandboxProviderRequest)(nil),                 // 67: openshell.v1.AttachSandboxProviderRequest
 	(*DetachSandboxProviderRequest)(nil),                 // 68: openshell.v1.DetachSandboxProviderRequest
 	(*DeleteSandboxRequest)(nil),                         // 69: openshell.v1.DeleteSandboxRequest
-	(*DeleteSandboxIfMatchesRequest)(nil),                // 70: openshell.v1.DeleteSandboxIfMatchesRequest
-	(*DeleteSandboxIfMatchesResponse)(nil),               // 71: openshell.v1.DeleteSandboxIfMatchesResponse
+	(*DeleteStoppedSandboxIfMatchesRequest)(nil),         // 70: openshell.v1.DeleteStoppedSandboxIfMatchesRequest
+	(*DeleteStoppedSandboxIfMatchesResponse)(nil),        // 71: openshell.v1.DeleteStoppedSandboxIfMatchesResponse
 	(*StopSandboxRequest)(nil),                           // 72: openshell.v1.StopSandboxRequest
 	(*StartSandboxRequest)(nil),                          // 73: openshell.v1.StartSandboxRequest
 	(*SandboxResponse)(nil),                              // 74: openshell.v1.SandboxResponse
@@ -21734,8 +21745,8 @@ var file_openshell_proto_depIdxs = []int32{
 	304, // 68: openshell.v1.AttachSandboxProviderRequest.workspace_scope:type_name -> openshell.datamodel.v1.WorkspaceSelector
 	304, // 69: openshell.v1.DetachSandboxProviderRequest.workspace_scope:type_name -> openshell.datamodel.v1.WorkspaceSelector
 	304, // 70: openshell.v1.DeleteSandboxRequest.workspace_scope:type_name -> openshell.datamodel.v1.WorkspaceSelector
-	304, // 71: openshell.v1.DeleteSandboxIfMatchesRequest.workspace_scope:type_name -> openshell.datamodel.v1.WorkspaceSelector
-	18,  // 72: openshell.v1.DeleteSandboxIfMatchesResponse.outcome:type_name -> openshell.v1.DeletionOutcome
+	304, // 71: openshell.v1.DeleteStoppedSandboxIfMatchesRequest.workspace_scope:type_name -> openshell.datamodel.v1.WorkspaceSelector
+	18,  // 72: openshell.v1.DeleteStoppedSandboxIfMatchesResponse.outcome:type_name -> openshell.v1.DeletionOutcome
 	304, // 73: openshell.v1.StopSandboxRequest.workspace_scope:type_name -> openshell.datamodel.v1.WorkspaceSelector
 	304, // 74: openshell.v1.StartSandboxRequest.workspace_scope:type_name -> openshell.datamodel.v1.WorkspaceSelector
 	39,  // 75: openshell.v1.SandboxResponse.sandbox:type_name -> openshell.v1.Sandbox
@@ -22040,7 +22051,7 @@ var file_openshell_proto_depIdxs = []int32{
 	68,  // 374: openshell.v1.OpenShell.DetachSandboxProvider:input_type -> openshell.v1.DetachSandboxProviderRequest
 	86,  // 375: openshell.v1.OpenShell.GetSandboxProviderStatus:input_type -> openshell.v1.GetSandboxProviderStatusRequest
 	69,  // 376: openshell.v1.OpenShell.DeleteSandbox:input_type -> openshell.v1.DeleteSandboxRequest
-	70,  // 377: openshell.v1.OpenShell.DeleteSandboxIfMatches:input_type -> openshell.v1.DeleteSandboxIfMatchesRequest
+	70,  // 377: openshell.v1.OpenShell.DeleteStoppedSandboxIfMatches:input_type -> openshell.v1.DeleteStoppedSandboxIfMatchesRequest
 	72,  // 378: openshell.v1.OpenShell.StopSandbox:input_type -> openshell.v1.StopSandboxRequest
 	73,  // 379: openshell.v1.OpenShell.StartSandbox:input_type -> openshell.v1.StartSandboxRequest
 	91,  // 380: openshell.v1.OpenShell.CreateSshSession:input_type -> openshell.v1.CreateSshSessionRequest
@@ -22125,7 +22136,7 @@ var file_openshell_proto_depIdxs = []int32{
 	78,  // 459: openshell.v1.OpenShell.DetachSandboxProvider:output_type -> openshell.v1.DetachSandboxProviderResponse
 	87,  // 460: openshell.v1.OpenShell.GetSandboxProviderStatus:output_type -> openshell.v1.GetSandboxProviderStatusResponse
 	90,  // 461: openshell.v1.OpenShell.DeleteSandbox:output_type -> openshell.v1.DeleteSandboxResponse
-	71,  // 462: openshell.v1.OpenShell.DeleteSandboxIfMatches:output_type -> openshell.v1.DeleteSandboxIfMatchesResponse
+	71,  // 462: openshell.v1.OpenShell.DeleteStoppedSandboxIfMatches:output_type -> openshell.v1.DeleteStoppedSandboxIfMatchesResponse
 	74,  // 463: openshell.v1.OpenShell.StopSandbox:output_type -> openshell.v1.SandboxResponse
 	74,  // 464: openshell.v1.OpenShell.StartSandbox:output_type -> openshell.v1.SandboxResponse
 	92,  // 465: openshell.v1.OpenShell.CreateSshSession:output_type -> openshell.v1.CreateSshSessionResponse

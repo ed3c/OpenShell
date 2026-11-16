@@ -159,7 +159,7 @@ mod tests {
     // Conditional sandbox deletion adds one public RPC and two public-only
     // messages. It reuses lifecycle deletion and changes no durable schema.
     const PUBLIC_RPC_SCHEMA_SHA256: &str =
-        "1871314d8522fab1bc18b22ada629e33bfa624c07e8c06bef2f71c81c0ff3ca6";
+        "cad342eb61d5fa1d238d229745ea9096459796981923bf4a0b87907a1d16e402";
     const DURABLE_SCHEMA_SHA256: &str =
         "d4dc7abdb91b919db1f7be0d4652e30cbfda86f3b2ed9b59d5de1f76a2bf691d";
     const PUBLIC_DURABLE_OVERLAP_SHA256: &str =

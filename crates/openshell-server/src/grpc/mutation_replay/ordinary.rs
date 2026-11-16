@@ -17,8 +17,8 @@ use openshell_core::proto::{
     ConfigureProviderRefreshResponse, CreateProviderRequest, CreateSandboxRequest,
     DeleteProviderProfileRequest, DeleteProviderProfileResponse, DeleteProviderRefreshRequest,
     DeleteProviderRefreshResponse, DeleteProviderRequest, DeleteProviderResponse,
-    DeleteSandboxIfMatchesRequest, DeleteSandboxIfMatchesResponse, DeleteSandboxRequest,
-    DeleteSandboxResponse, DeleteServiceRequest, DeleteServiceResponse,
+    DeleteSandboxRequest, DeleteSandboxResponse, DeleteServiceRequest, DeleteServiceResponse,
+    DeleteStoppedSandboxIfMatchesRequest, DeleteStoppedSandboxIfMatchesResponse,
     DetachSandboxProviderRequest, DetachSandboxProviderResponse, EditDraftChunkRequest,
     EditDraftChunkResponse, ExposeServiceRequest, ImportProviderProfilesRequest,
     ImportProviderProfilesResponse, Provider, ProviderMutationReceipt, ProviderProfile,
@@ -561,12 +561,12 @@ sandbox_scoped_mutation!(
 );
 
 sandbox_scoped_mutation!(
-    DeleteSandboxIfMatchesRequest,
-    DeleteSandboxIfMatchesResponse,
-    "DeleteSandboxIfMatches",
-    sandbox::handle_delete_sandbox_if_matches,
+    DeleteStoppedSandboxIfMatchesRequest,
+    DeleteStoppedSandboxIfMatchesResponse,
+    "DeleteStoppedSandboxIfMatches",
+    sandbox::handle_delete_stopped_sandbox_if_matches,
     User,
-    |response: &Response<DeleteSandboxIfMatchesResponse>| Ok(Outcome::SandboxDeletion {
+    |response: &Response<DeleteStoppedSandboxIfMatchesResponse>| Ok(Outcome::SandboxDeletion {
         id: response.get_ref().sandbox_id.clone(),
         outcome: response.get_ref().outcome
     }),
@@ -574,7 +574,7 @@ sandbox_scoped_mutation!(
         let Outcome::SandboxDeletion { id, outcome } = value else {
             return Err(replay_unavailable());
         };
-        Ok(DeleteSandboxIfMatchesResponse {
+        Ok(DeleteStoppedSandboxIfMatchesResponse {
             sandbox_id: id,
             outcome,
         })

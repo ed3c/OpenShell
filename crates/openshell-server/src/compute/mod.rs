@@ -315,6 +315,43 @@ struct SandboxDeleteTarget {
 pub struct SandboxDeletePreconditions {
     pub expected_sandbox_id: Option<String>,
     pub expected_resource_version: Option<u64>,
+    pub require_stopped: bool,
+}
+
+// Called under the original lifecycle/scoped lock and again for every storage
+// CAS retry. Remote replicas can change the row even while a local gate is held.
+fn validate_sandbox_delete_preconditions(
+    sandbox: &Sandbox,
+    preconditions: &SandboxDeletePreconditions,
+) -> Result<(), Status> {
+    if preconditions
+        .expected_sandbox_id
+        .as_deref()
+        .is_some_and(|expected| expected != sandbox.object_id())
+    {
+        return Err(Status::aborted(
+            "sandbox identity changed before delete mutation",
+        ));
+    }
+    if preconditions
+        .expected_resource_version
+        .is_some_and(|expected| expected != sandbox_resource_version(sandbox))
+    {
+        return Err(Status::aborted(
+            "sandbox resource version changed before delete mutation",
+        ));
+    }
+    if preconditions.require_stopped {
+        provisioning_operation::ensure_operation_settled(sandbox)?;
+        if SandboxPhase::try_from(sandbox.phase()).unwrap_or(SandboxPhase::Unknown)
+            != SandboxPhase::Stopped
+        {
+            return Err(Status::failed_precondition(
+                "conditional deletion requires the original sandbox to remain Stopped",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Identity and driver result for a completed delete request.
@@ -1663,7 +1700,7 @@ impl ComputeRuntime {
         let sandbox_id = created.object_id();
         let sandbox_name = created.object_name();
         let transition = match self
-            .begin_sandbox_delete_with_initial_snapshot(sandbox_id, None, Some(created))
+            .begin_sandbox_delete_with_initial_snapshot(sandbox_id, None, Some(created), None)
             .await
         {
             Ok(BeginDelete::Started(transition)) => *transition,
@@ -2871,29 +2908,18 @@ impl ComputeRuntime {
                 "sandbox name changed while the delete request was waiting; retry explicitly",
             ));
         }
-        if preconditions
-            .expected_sandbox_id
-            .as_deref()
-            .is_some_and(|expected| expected != current.object_id())
-        {
-            return Err(Status::aborted(
-                "sandbox identity changed before delete mutation",
-            ));
-        }
-        if preconditions
-            .expected_resource_version
-            .is_some_and(|expected| expected != sandbox_resource_version(&current))
-        {
-            return Err(Status::aborted(
-                "sandbox resource version changed before delete mutation",
-            ));
-        }
+        validate_sandbox_delete_preconditions(&current, &preconditions)?;
 
         // `Started` carries both sides of the CAS transition: the durable
         // `Deleting` row used to fence recovery, and the prior row used only
         // for exact-version rollback after an ambiguous driver failure.
         let transition = match self
-            .begin_sandbox_delete_with_initial_snapshot(&target.sandbox_id, Some(current), None)
+            .begin_sandbox_delete_with_initial_snapshot(
+                &target.sandbox_id,
+                Some(current),
+                None,
+                Some(&preconditions),
+            )
             .await?
         {
             BeginDelete::AlreadyDeleting => {
@@ -2973,6 +2999,7 @@ impl ComputeRuntime {
         sandbox_id: &str,
         mut initial_snapshot: Option<Sandbox>,
         failed_create: Option<&Sandbox>,
+        preconditions: Option<&SandboxDeletePreconditions>,
     ) -> Result<BeginDelete, Status> {
         let operation = "set sandbox phase to Deleting";
 
@@ -2987,6 +3014,9 @@ impl ComputeRuntime {
                     .ok_or_else(|| Status::not_found("sandbox not found"))?,
             };
             provisioning_operation::ensure_operation_settled(&sandbox)?;
+            if let Some(preconditions) = preconditions {
+                validate_sandbox_delete_preconditions(&sandbox, preconditions)?;
+            }
 
             // Failed-create compensation owns only its original attempt.
             // Preserve its timeout diagnosis and any replacement attempt on
@@ -13475,7 +13505,7 @@ mod tests {
             .unwrap();
 
         let transition = runtime
-            .begin_sandbox_delete_with_initial_snapshot("sb-1", Some(stale_snapshot), None)
+            .begin_sandbox_delete_with_initial_snapshot("sb-1", Some(stale_snapshot), None, None)
             .await
             .unwrap();
         let BeginDelete::Started(transition) = transition else {
@@ -13962,6 +13992,164 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stopped_guarded_delete_rejects_start_that_wins_the_original_gate() {
+        let driver = ControlledDriver::new();
+        driver.block_start();
+        let runtime = test_runtime(driver.clone()).await;
+        let sandbox = sandbox_record("sb-stopped-start", "stopped-start", SandboxPhase::Stopped);
+        runtime.store.put_message(&sandbox).await.unwrap();
+        let stopped = runtime
+            .store
+            .get_message::<Sandbox>(sandbox.object_id())
+            .await
+            .unwrap()
+            .unwrap();
+        let expected_version = sandbox_resource_version(&stopped);
+        let start_runtime = runtime.clone();
+        let start = tokio::spawn(async move {
+            start_runtime
+                .start_sandbox("default", "stopped-start")
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(1), driver.start_started.notified())
+            .await
+            .expect("start did not reach original driver");
+        let delete_runtime = runtime.clone();
+        let delete = tokio::spawn(async move {
+            delete_runtime
+                .delete_sandbox_with_preconditions(
+                    "default",
+                    "stopped-start",
+                    SandboxDeletePreconditions {
+                        expected_sandbox_id: Some("sb-stopped-start".into()),
+                        expected_resource_version: Some(expected_version),
+                        require_stopped: true,
+                    },
+                )
+                .await
+        });
+        tokio::task::yield_now().await;
+        assert_eq!(driver.delete_calls(), 0);
+        driver.release_start();
+        start.await.unwrap().unwrap();
+        let error = delete.await.unwrap().unwrap_err();
+        assert_eq!(error.code(), Code::Aborted);
+        assert_eq!(driver.start_calls(), 1);
+        assert_eq!(driver.delete_calls(), 0);
+        let current = runtime
+            .store
+            .get_message::<Sandbox>(sandbox.object_id())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_ne!(current.phase(), SandboxPhase::Deleting as i32);
+    }
+
+    #[tokio::test]
+    async fn stopped_guarded_delete_revalidates_each_storage_cas_retry() {
+        let driver = ControlledDriver::new();
+        let runtime = test_runtime(driver.clone()).await;
+        let sandbox = sandbox_record("sb-stopped-cas", "stopped-cas", SandboxPhase::Stopped);
+        runtime.store.put_message(&sandbox).await.unwrap();
+        let stopped = runtime
+            .store
+            .get_message::<Sandbox>(sandbox.object_id())
+            .await
+            .unwrap()
+            .unwrap();
+        let version = sandbox_resource_version(&stopped);
+        // The first snapshot is Stopped, but another replica commits Starting
+        // before this owner's first Deleting CAS. Its retry must not adopt it.
+        runtime
+            .store
+            .update_message_cas::<Sandbox, _>(sandbox.object_id(), version, |sandbox| {
+                sandbox.status.as_mut().unwrap().phase = SandboxPhase::Starting.into();
+            })
+            .await
+            .unwrap();
+        let preconditions = SandboxDeletePreconditions {
+            expected_sandbox_id: Some(sandbox.object_id().into()),
+            expected_resource_version: Some(version),
+            require_stopped: true,
+        };
+        let error = runtime
+            .begin_sandbox_delete_with_initial_snapshot(
+                sandbox.object_id(),
+                Some(stopped),
+                None,
+                Some(&preconditions),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), Code::Aborted);
+        assert_eq!(driver.delete_calls(), 0);
+        let current = runtime
+            .store
+            .get_message::<Sandbox>(sandbox.object_id())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.phase(), SandboxPhase::Starting as i32);
+    }
+
+    #[tokio::test]
+    async fn stopped_guarded_delete_accepts_only_the_exact_stopped_observation() {
+        let driver = ControlledDriver::new();
+        let runtime = test_runtime(driver.clone()).await;
+        let sandbox = sandbox_record("sb-stopped-ok", "stopped-ok", SandboxPhase::Stopped);
+        runtime.store.put_message(&sandbox).await.unwrap();
+        let current = runtime
+            .store
+            .get_message::<Sandbox>(sandbox.object_id())
+            .await
+            .unwrap()
+            .unwrap();
+        let result = runtime
+            .delete_sandbox_with_preconditions(
+                "default",
+                sandbox.object_name(),
+                SandboxDeletePreconditions {
+                    expected_sandbox_id: Some(current.object_id().into()),
+                    expected_resource_version: Some(sandbox_resource_version(&current)),
+                    require_stopped: true,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.sandbox_id, sandbox.object_id());
+        assert!(result.acknowledged());
+        assert_eq!(driver.delete_calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn stopped_guarded_delete_rejects_running_without_touching_driver() {
+        let driver = ControlledDriver::new();
+        let runtime = test_runtime(driver.clone()).await;
+        let sandbox = sandbox_record("sb-running-hold", "running-hold", SandboxPhase::Ready);
+        runtime.store.put_message(&sandbox).await.unwrap();
+        let current = runtime
+            .store
+            .get_message::<Sandbox>(sandbox.object_id())
+            .await
+            .unwrap()
+            .unwrap();
+        let error = runtime
+            .delete_sandbox_with_preconditions(
+                "default",
+                sandbox.object_name(),
+                SandboxDeletePreconditions {
+                    expected_sandbox_id: Some(current.object_id().into()),
+                    expected_resource_version: Some(sandbox_resource_version(&current)),
+                    require_stopped: true,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), Code::FailedPrecondition);
+        assert_eq!(driver.delete_calls(), 0);
+    }
+
+    #[tokio::test]
     async fn identity_guarded_delete_rejects_a_different_sandbox_before_mutation() {
         let driver = ControlledDriver::new();
         let runtime = test_runtime(driver.clone()).await;
@@ -13975,6 +14163,7 @@ mod tests {
                 SandboxDeletePreconditions {
                     expected_sandbox_id: Some("sb-stale".to_string()),
                     expected_resource_version: None,
+                    require_stopped: false,
                 },
             )
             .await
@@ -14019,6 +14208,7 @@ mod tests {
                     SandboxDeletePreconditions {
                         expected_sandbox_id: Some("sb-1".to_string()),
                         expected_resource_version: Some(expected_resource_version),
+                        require_stopped: false,
                     },
                 )
                 .await
@@ -14078,6 +14268,7 @@ mod tests {
                 SandboxDeletePreconditions {
                     expected_sandbox_id: Some(current.object_id().to_string()),
                     expected_resource_version: Some(sandbox_resource_version(&current)),
+                    require_stopped: false,
                 },
             )
             .await
@@ -18973,6 +19164,7 @@ endpoint = { kind = "unix", socket_path = "/run/agent-substrate/isolation.sock" 
                 sandbox.object_id(),
                 Some(stale.clone()),
                 Some(&stale),
+                None,
             )
             .await;
         assert!(matches!(result, Err(error) if error.code() == Code::DeadlineExceeded));
@@ -19191,6 +19383,7 @@ endpoint = { kind = "unix", socket_path = "/run/agent-substrate/isolation.sock" 
                 sandbox.object_id(),
                 Some(stale.clone()),
                 Some(&stale),
+                None,
             )
             .await;
         assert!(matches!(result, Err(error) if error.code() == Code::Aborted));
