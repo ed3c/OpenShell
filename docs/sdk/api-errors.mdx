@@ -93,14 +93,14 @@ No SDK automatically retries a mutation as a result of decoding these details.
 
 ## Durable request admission
 
-Thirty-one user-callable unary RPCs accept an optional `request_id` in their protobuf requests.
+Thirty-two user-callable unary RPCs accept an optional `request_id` in their protobuf requests.
 
 | Resource | RPCs |
 |---|---|
 | Workspace | `CreateWorkspace`, `DeleteWorkspace` |
 | Workspace member | `AddWorkspaceMember`, `RemoveWorkspaceMember` |
 | Sandbox template | `CreateSandboxTemplate`, `DeleteSandboxTemplate` |
-| Sandbox | `CreateSandbox`, `UpdateSandbox`, `DeleteSandbox`, `StartSandbox`, `StopSandbox`, `AttachSandboxProvider`, `DetachSandboxProvider` |
+| Sandbox | `CreateSandbox`, `UpdateSandbox`, `DeleteSandbox`, `DeleteStoppedSandboxIfMatches`, `StartSandbox`, `StopSandbox`, `AttachSandboxProvider`, `DetachSandboxProvider` |
 | Service | `ExposeService`, `DeleteService` |
 | Provider | `CreateProvider`, `UpdateProvider`, `DeleteProvider`, `ConfigureProviderRefresh`, `DeleteProviderRefresh`, `RotateProviderCredential` |
 | Provider profile | `ImportProviderProfiles`, `UpdateProviderProfiles`, `DeleteProviderProfile` |
@@ -291,6 +291,17 @@ failed preconditions, or backend errors. Re-revoking an existing revoked session
 returns `COMPLETED` after authorization without changing its resource version.
 
 `DeleteSandbox` also returns the original `sandbox_id` when it found a target.
+
+Use `DeleteStoppedSandboxIfMatches` when deleting a sandbox observed earlier.
+Supply its canonical name, original `expected_sandbox_id`, and the resource
+version from the same Stopped observation. The gateway checks identity, version,
+Stopped, and settled driver operations under the original lifecycle lock and on
+every storage CAS retry. If a start changes that observation first, or the name
+now belongs to another sandbox, the gateway refuses deletion. Older gateways
+return `UNIMPLEMENTED`; clients must not fall back to `DeleteSandbox`. A successful
+native deletion still requires the compute driver's resource-release readback
+before claiming disk space was reclaimed.
+
 For an accepted deletion, poll or watch that identity. A same-name sandbox with a
 different ID is not the sandbox being deleted. Cancellation or a disconnected
 client does not stop the gateway's already-started deletion worker.

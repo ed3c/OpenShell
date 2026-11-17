@@ -20,6 +20,7 @@ macro_rules! openshell {
 const CATALOG: &[(&str, ActivityId)] = &[
     (openshell!("CreateSandbox"), CREATE),
     (openshell!("DeleteSandbox"), DELETE),
+    (openshell!("DeleteStoppedSandboxIfMatches"), DELETE),
     (openshell!("StopSandbox"), UPDATE),
     (openshell!("StartSandbox"), UPDATE),
     (openshell!("SuspendSandbox"), UPDATE),
