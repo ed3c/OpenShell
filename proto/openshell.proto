@@ -177,6 +177,17 @@ service OpenShell {
     };
   }
 
+  // Delete only if the observed identity/version is still Stopped.
+  // Older gateways reject this method without starting a name-only deletion.
+  rpc DeleteStoppedSandboxIfMatches(DeleteStoppedSandboxIfMatchesRequest)
+      returns (DeleteStoppedSandboxIfMatchesResponse) {
+    option (openshell.options.v1.authorization) = {
+      auth_mode: "bearer"
+      scope: "sandbox:write"
+      workspace_role: "user"
+    };
+  }
+
   // Stop a sandbox while retaining its persistent state.
   rpc StopSandbox(StopSandboxRequest) returns (SandboxResponse) {
     option (openshell.options.v1.authorization) = {
@@ -1565,6 +1576,28 @@ message DeleteSandboxRequest {
   // Optional nonzero UUID for durable at-most-once admission. Successful results
   // can be replayed for 24 hours; see the API errors and retries reference.
   string request_id = 4;
+}
+
+// Conditional deletion of one previously observed sandbox.
+message DeleteStoppedSandboxIfMatchesRequest {
+  // Workspace scope. Only a named workspace selection is accepted.
+  openshell.datamodel.v1.WorkspaceSelector workspace_scope = 1;
+  // Canonical sandbox name.
+  string name = 2;
+  // Required immutable identity from the original sandbox observation. A name
+  // replacement is rejected before any deletion is started.
+  string expected_sandbox_id = 3;
+  // Required resource version from the same Stopped observation. The gateway
+  // checks it and the phase on every durable deletion CAS attempt.
+  uint64 expected_resource_version = 5;
+  // Optional nonzero UUID for durable at-most-once admission.
+  string request_id = 4;
+}
+
+message DeleteStoppedSandboxIfMatchesResponse {
+  // The outcome for the original immutable sandbox, never a name replacement.
+  DeletionOutcome outcome = 1;
+  string sandbox_id = 2;
 }
 
 // Stop sandbox request.

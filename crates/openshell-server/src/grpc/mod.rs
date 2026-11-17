@@ -33,6 +33,7 @@ use openshell_core::proto::{
     DeleteProviderRefreshResponse, DeleteProviderRequest, DeleteProviderResponse,
     DeleteSandboxRequest, DeleteSandboxResponse, DeleteSandboxTemplateRequest,
     DeleteSandboxTemplateResponse, DeleteServiceRequest, DeleteServiceResponse,
+    DeleteStoppedSandboxIfMatchesRequest, DeleteStoppedSandboxIfMatchesResponse,
     DeleteWorkspaceRequest, DeleteWorkspaceResponse, DetachSandboxProviderRequest,
     DetachSandboxProviderResponse, EditDraftChunkRequest, EditDraftChunkResponse,
     ExchangeProviderSubjectTokenRequest, ExchangeProviderSubjectTokenResponse, ExecSandboxEvent,
@@ -453,6 +454,13 @@ impl OpenShell for OpenShellService {
             )
         };
         mutation_audit::deletion(targets, mutation_replay::run(&self.state, request)).await
+    }
+
+    async fn delete_stopped_sandbox_if_matches(
+        &self,
+        request: Request<DeleteStoppedSandboxIfMatchesRequest>,
+    ) -> Result<Response<DeleteStoppedSandboxIfMatchesResponse>, Status> {
+        mutation_replay::run(&self.state, request).await
     }
 
     async fn stop_sandbox(
