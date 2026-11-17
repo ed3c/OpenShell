@@ -9,8 +9,8 @@ use std::future::Future;
 use openshell_core::proto::{
     DeleteProviderProfileResponse, DeleteProviderRefreshResponse, DeleteProviderResponse,
     DeleteSandboxResponse, DeleteSandboxTemplateResponse, DeleteServiceResponse,
-    DeleteWorkspaceResponse, DeletionOutcome, RemoveWorkspaceMemberResponse, WorkspaceSelector,
-    workspace_selector::Selection,
+    DeleteStoppedSandboxIfMatchesResponse, DeleteWorkspaceResponse, DeletionOutcome,
+    RemoveWorkspaceMemberResponse, WorkspaceSelector, workspace_selector::Selection,
 };
 use openshell_ocsf::ResourceDetails;
 use tonic::{Response, Status};
@@ -49,6 +49,16 @@ deletion!(
 );
 
 impl Deletion for DeleteSandboxResponse {
+    fn deletion_outcome(&self) -> DeletionOutcome {
+        self.outcome()
+    }
+
+    fn deleted_uid(&self) -> Option<&str> {
+        Some(self.sandbox_id.as_str()).filter(|id| !id.is_empty())
+    }
+}
+
+impl Deletion for DeleteStoppedSandboxIfMatchesResponse {
     fn deletion_outcome(&self) -> DeletionOutcome {
         self.outcome()
     }
@@ -109,9 +119,11 @@ mod tests {
     use openshell_core::proto::{
         CreateSandboxRequest, CreateWorkspaceRequest, DeleteProviderProfileRequest,
         DeleteProviderRefreshRequest, DeleteProviderRequest, DeleteSandboxRequest,
-        DeleteSandboxTemplateRequest, DeleteServiceRequest, DeleteWorkspaceRequest,
-        DeletionOutcome, RemoveWorkspaceMemberRequest, SandboxSpec, workspace_selector,
+        DeleteSandboxTemplateRequest, DeleteServiceRequest, DeleteStoppedSandboxIfMatchesRequest,
+        DeleteWorkspaceRequest, DeletionOutcome, RemoveWorkspaceMemberRequest, Sandbox,
+        SandboxPhase, SandboxSpec, SandboxStatus, workspace_selector,
     };
+    use openshell_core::{GetResourceVersion, ObjectId, ObjectName};
     use serde_json::{Value, json};
 
     fn principal() -> Principal {
@@ -477,6 +489,175 @@ mod tests {
         assert_eq!(
             event["resources"],
             json!([{"type": "workspace", "name": "audit-delete-done"}])
+        );
+    }
+
+    #[tokio::test]
+    async fn conditional_sandbox_delete_records_the_original_identity() {
+        let state = test_server_state().await;
+        let sandbox = Sandbox {
+            metadata: Some(openshell_core::proto::datamodel::v1::ObjectMeta {
+                id: "audit-conditional-id".into(),
+                name: "audit-conditional".into(),
+                workspace: "default".into(),
+                ..Default::default()
+            }),
+            status: Some(SandboxStatus {
+                phase: SandboxPhase::Stopped.into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        state.store.put_message(&sandbox).await.unwrap();
+        let sandbox = state
+            .store
+            .get_message::<Sandbox>(sandbox.object_id())
+            .await
+            .unwrap()
+            .unwrap();
+        let service = OpenShellService::new(state.clone());
+        let (result, events) = audited_mutation(
+            &path("DeleteStoppedSandboxIfMatches"),
+            &principal(),
+            service.delete_stopped_sandbox_if_matches(authed_request(
+                DeleteStoppedSandboxIfMatchesRequest {
+                    workspace_scope: Some(workspace_selector("default")),
+                    name: sandbox.object_name().into(),
+                    expected_sandbox_id: sandbox.object_id().into(),
+                    expected_resource_version: sandbox.get_resource_version(),
+                    ..Default::default()
+                },
+            )),
+        )
+        .await;
+
+        let response = result.unwrap().into_inner();
+        assert_eq!(response.outcome(), DeletionOutcome::Accepted);
+        assert_eq!(response.sandbox_id, sandbox.object_id());
+        let event = only(&events);
+        assert_eq!(event["status_detail"], "accepted", "{event}");
+        assert_eq!(event["status_id"], 1, "{event}");
+        assert_eq!(
+            event["resources"],
+            json!([
+                {"type": "workspace", "name": "default"},
+                {"type": "sandbox", "name": "audit-conditional", "uid": sandbox.object_id()},
+            ])
+        );
+        let pending = state
+            .store
+            .get_message::<Sandbox>(sandbox.object_id())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            pending.status.unwrap().phase,
+            i32::from(SandboxPhase::Deleting)
+        );
+    }
+
+    #[tokio::test]
+    async fn completed_conditional_delete_records_the_original_identity() {
+        let targets = scoped(
+            Some(&workspace_selector("default")),
+            [requested("sandbox", "audit-conditional")],
+        );
+        let call = deletion(targets, async {
+            Ok::<_, Status>(Response::new(DeleteStoppedSandboxIfMatchesResponse {
+                outcome: DeletionOutcome::Completed.into(),
+                sandbox_id: "audit-conditional-id".into(),
+            }))
+        });
+        let (result, events) =
+            audited_mutation(&path("DeleteStoppedSandboxIfMatches"), &principal(), call).await;
+
+        assert_eq!(
+            result.unwrap().get_ref().outcome(),
+            DeletionOutcome::Completed
+        );
+        let event = only(&events);
+        assert_eq!(event["status_id"], 1, "{event}");
+        assert!(event.get("status_detail").is_none(), "{event}");
+        assert_eq!(
+            event["resources"],
+            json!([
+                {"type": "workspace", "name": "default"},
+                {"type": "sandbox", "name": "audit-conditional", "uid": "audit-conditional-id"},
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn denied_conditional_delete_does_not_record_a_deleted_identity() {
+        use crate::auth::identity::{Identity, IdentityProvider};
+        use crate::auth::principal::UserPrincipal;
+
+        let mut state = test_server_state().await;
+        std::sync::Arc::get_mut(&mut state).unwrap().admin_role = "openshell-admin".into();
+        let principal = Principal::User(UserPrincipal {
+            identity: Identity {
+                subject: "non-member".into(),
+                display_name: None,
+                roles: vec![],
+                scopes: vec![],
+                provider: IdentityProvider::Oidc,
+            },
+        });
+        let mut request = tonic::Request::new(DeleteStoppedSandboxIfMatchesRequest {
+            workspace_scope: Some(workspace_selector("default")),
+            name: "audit-conditional".into(),
+            expected_sandbox_id: "audit-conditional-id".into(),
+            expected_resource_version: 1,
+            ..Default::default()
+        });
+        request.extensions_mut().insert(principal.clone());
+        let service = OpenShellService::new(state);
+        let (result, events) = audited_mutation(
+            &path("DeleteStoppedSandboxIfMatches"),
+            &principal,
+            service.delete_stopped_sandbox_if_matches(request),
+        )
+        .await;
+
+        assert_eq!(result.unwrap_err().code(), tonic::Code::NotFound);
+        let event = only(&events);
+        audit::test_support::assert_denial(
+            event,
+            &path("DeleteStoppedSandboxIfMatches"),
+            "not_workspace_member",
+        );
+        assert_eq!(
+            event["resources"],
+            json!([
+                {"type": "workspace", "name": "default"},
+                {"type": "sandbox", "name": "audit-conditional"},
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_conditional_delete_keeps_the_requested_target_unknown() {
+        let targets = scoped(
+            Some(&workspace_selector("default")),
+            [requested("sandbox", "audit-conditional")],
+        );
+        let call = deletion(
+            targets,
+            std::future::pending::<Result<Response<DeleteStoppedSandboxIfMatchesResponse>, Status>>(
+            ),
+        );
+        let events =
+            cancelled_mutation(&path("DeleteStoppedSandboxIfMatches"), &principal(), call).await;
+
+        let event = only(&events);
+        assert_eq!(event["status_detail"], "unknown:cancelled", "{event}");
+        assert_eq!(event["status_id"], 0, "{event}");
+        assert_eq!(
+            event["resources"],
+            json!([
+                {"type": "workspace", "name": "default"},
+                {"type": "sandbox", "name": "audit-conditional"},
+            ])
         );
     }
 }

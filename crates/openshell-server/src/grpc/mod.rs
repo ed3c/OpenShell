@@ -460,7 +460,14 @@ impl OpenShell for OpenShellService {
         &self,
         request: Request<DeleteStoppedSandboxIfMatchesRequest>,
     ) -> Result<Response<DeleteStoppedSandboxIfMatchesResponse>, Status> {
-        mutation_replay::run(&self.state, request).await
+        let targets = {
+            let request = request.get_ref();
+            mutation_audit::scoped(
+                request.workspace_scope.as_ref(),
+                [mutation_audit::requested("sandbox", &request.name)],
+            )
+        };
+        mutation_audit::deletion(targets, mutation_replay::run(&self.state, request)).await
     }
 
     async fn stop_sandbox(
